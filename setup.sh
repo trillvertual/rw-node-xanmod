@@ -6,6 +6,11 @@
 
 set -e
 
+# --- Неинтерактивный режим для apt/dpkg ---
+export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a
+APT_OPTS='-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef'
+
 # --- Проверка root ---
 if [ "$EUID" -ne 0 ]; then
   echo "Запусти от root"
@@ -71,8 +76,9 @@ hostnamectl set-hostname "$HOSTNAME"
 # 2. БАЗОВЫЕ ПАКЕТЫ
 # ==============================
 echo "[2/8] Обновление системы и установка пакетов..."
-apt update && apt upgrade -y
-apt install -y sudo ufw nano git wget curl net-tools cron socat fail2ban
+apt-get update
+apt-get upgrade -y $APT_OPTS
+apt-get install -y $APT_OPTS sudo ufw nano git wget curl net-tools cron socat fail2ban
 
 # ==============================
 # 3. XANMOD
@@ -83,7 +89,8 @@ wget -qO - https://dl.xanmod.org/archive.key | \
   gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
 echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org bookworm main" | \
   tee /etc/apt/sources.list.d/xanmod-release.list
-apt update && apt install -y "$XANMOD_PKG"
+apt-get update
+apt-get install -y $APT_OPTS "$XANMOD_PKG"
 
 # BBR
 echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
