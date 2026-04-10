@@ -6,18 +6,15 @@
 
 set -e
 
-# --- Неинтерактивный режим для apt/dpkg ---
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a
 APT_OPTS='-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef'
 
-# --- Проверка root ---
 if [ "$EUID" -ne 0 ]; then
   echo "Запусти от root"
   exit 1
 fi
 
-# --- Функция ожидания освобождения dpkg lock ---
 wait_for_dpkg() {
   while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
         fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
@@ -32,10 +29,6 @@ echo "==========================================="
 echo "  Подготовка VPS для Remnawave Node"
 echo "==========================================="
 echo
-
-# ==============================
-# СБОР ПАРАМЕТРОВ
-# ==============================
 
 read -rp "Имя хоста (например FR-1): " HOSTNAME
 while [ -z "$HOSTNAME" ]; do
@@ -56,7 +49,6 @@ while [[ "$NODE_TYPE" != "1" && "$NODE_TYPE" != "2" ]]; do
   read -rp "Введи 1 или 2: " NODE_TYPE
 done
 
-# --- Определение уровня CPU ---
 CPU_FLAGS=$(awk '/flags/{print; exit}' /proc/cpuinfo)
 if echo "$CPU_FLAGS" | grep -q "avx2"; then
   XANMOD_PKG="linux-xanmod-x64v3"
@@ -91,7 +83,7 @@ apt-get update
 wait_for_dpkg
 apt-get upgrade -y $APT_OPTS
 wait_for_dpkg
-apt-get install -y $APT_OPTS sudo ufw nano git wget curl net-tools cron socat fail2ban psmisc
+apt-get install -y $APT_OPTS sudo ufw nano git wget curl net-tools cron socat fail2ban psmisc expect
 
 # ==============================
 # 3. XANMOD
@@ -107,7 +99,6 @@ apt-get update
 wait_for_dpkg
 apt-get install -y $APT_OPTS "$XANMOD_PKG"
 
-# BBR
 echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
 echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
 sysctl -p
@@ -174,15 +165,19 @@ systemctl restart fail2ban
 # 7. MOTD + ТАЙМЗОНА
 # ==============================
 echo "[7/8] Установка MOTD..."
-
-# Ждём освобождения apt
 wait_for_dpkg
 
-# Скачиваем скрипт MOTD и запускаем с автовыбором русского языка
-curl -fsSL https://raw.githubusercontent.com/distillium/motd/main/install-motd.sh -o /tmp/install-motd.sh
-chmod +x /tmp/install-motd.sh
-echo "1" | /tmp/install-motd.sh
-rm -f /tmp/install-motd.sh
+# Запускаем установщик MOTD через expect для автоответа на выбор языка
+expect <<'EXPECT'
+set timeout 300
+spawn bash -c "curl -fsSL https://raw.githubusercontent.com/distillium/motd/main/install-motd.sh | bash"
+expect {
+    -re "Choice.*:" { send "1\r"; exp_continue }
+    -re "Выбор.*:" { send "1\r"; exp_continue }
+    timeout { exit 1 }
+    eof
+}
+EXPECT
 
 timedatectl set-timezone Europe/Moscow
 
