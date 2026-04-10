@@ -17,6 +17,16 @@ if [ "$EUID" -ne 0 ]; then
   exit 1
 fi
 
+# --- Функция ожидания освобождения dpkg lock ---
+wait_for_dpkg() {
+  while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
+        fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
+        fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
+    echo "  Ожидание освобождения dpkg lock..."
+    sleep 3
+  done
+}
+
 clear
 echo "==========================================="
 echo "  Подготовка VPS для Remnawave Node"
@@ -76,9 +86,12 @@ hostnamectl set-hostname "$HOSTNAME"
 # 2. БАЗОВЫЕ ПАКЕТЫ
 # ==============================
 echo "[2/8] Обновление системы и установка пакетов..."
+wait_for_dpkg
 apt-get update
+wait_for_dpkg
 apt-get upgrade -y $APT_OPTS
-apt-get install -y $APT_OPTS sudo ufw nano git wget curl net-tools cron socat fail2ban
+wait_for_dpkg
+apt-get install -y $APT_OPTS sudo ufw nano git wget curl net-tools cron socat fail2ban psmisc
 
 # ==============================
 # 3. XANMOD
@@ -89,7 +102,9 @@ wget -qO - https://dl.xanmod.org/archive.key | \
   gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
 echo "deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org bookworm main" | \
   tee /etc/apt/sources.list.d/xanmod-release.list
+wait_for_dpkg
 apt-get update
+wait_for_dpkg
 apt-get install -y $APT_OPTS "$XANMOD_PKG"
 
 # BBR
@@ -159,7 +174,16 @@ systemctl restart fail2ban
 # 7. MOTD + ТАЙМЗОНА
 # ==============================
 echo "[7/8] Установка MOTD..."
-curl -fsSL https://raw.githubusercontent.com/distillium/motd/main/install-motd.sh | bash
+
+# Ждём освобождения apt
+wait_for_dpkg
+
+# Скачиваем скрипт MOTD и запускаем с автовыбором русского языка
+curl -fsSL https://raw.githubusercontent.com/distillium/motd/main/install-motd.sh -o /tmp/install-motd.sh
+chmod +x /tmp/install-motd.sh
+echo "1" | /tmp/install-motd.sh
+rm -f /tmp/install-motd.sh
+
 timedatectl set-timezone Europe/Moscow
 
 cat > /etc/dist-motd.conf << 'EOF'
