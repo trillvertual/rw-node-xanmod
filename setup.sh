@@ -335,6 +335,24 @@ if [ "$MODE" == "2" ]; then
     echo "  XanMod LTS уже установлен."
   fi
 
+  # Доставляем kernel-cleanup если его нет
+  if [ ! -f /usr/local/sbin/kernel-cleanup ]; then
+    echo "  Добавляю утилиту kernel-cleanup..."
+    cat > /usr/local/sbin/kernel-cleanup << 'SCRIPT'
+#!/bin/bash
+CURRENT=$(uname -r)
+echo "Текущее ядро: $CURRENT"
+REMOVE=$(dpkg -l | grep 'linux-image-[0-9]' | grep '^ii' | awk '{print $2}' | grep -v "$CURRENT")
+if [ -z "$REMOVE" ]; then
+  echo "Нечего удалять."
+  exit 0
+fi
+echo "Удаляю: $REMOVE"
+apt purge -y $REMOVE && apt autoremove -y && update-grub
+SCRIPT
+    chmod +x /usr/local/sbin/kernel-cleanup
+  fi
+
   echo
   echo "[3/5] Применение оптимизаций..."
   apply_optimizations
