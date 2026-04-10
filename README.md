@@ -1,367 +1,85 @@
-#!/bin/bash
-# ============================================
 # rw-node-xanmod
-# Подготовка / апгрейд Remnawave Node
-# Debian 12 + XanMod LTS + Security + Tuning
-# ============================================
 
-set -e
+Универсальный скрипт для подготовки и апгрейда VPS под [Remnawave Node](https://docs.rw/docs/install/remnawave-node).
 
-export DEBIAN_FRONTEND=noninteractive
-export NEEDRESTART_MODE=a
-APT_OPTS='-o Dpkg::Options::=--force-confold -o Dpkg::Options::=--force-confdef'
+## Что делает
 
-if [ "$EUID" -ne 0 ]; then
-  echo "Запусти от root"
-  exit 1
-fi
+Один скрипт, два режима на выбор при запуске:
 
-wait_for_dpkg() {
-  while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || \
-        fuser /var/lib/apt/lists/lock >/dev/null 2>&1 || \
-        fuser /var/lib/dpkg/lock >/dev/null 2>&1; do
-    echo "  Ожидание освобождения dpkg lock..."
-    sleep 3
-  done
-}
+### 1. Setup — чистая установка
 
-# ============================================
-# ВЫБОР РЕЖИМА
-# ============================================
-clear
-echo "==========================================="
-echo "  rw-node-xanmod"
-echo "==========================================="
-echo
-echo "  1) Setup   — чистая установка новой ноды"
-echo "  2) Upgrade — апгрейд уже настроенной ноды"
-echo "  3) Выход"
-echo
-read -rp "Выбор [1/2/3]: " MODE
-while [[ "$MODE" != "1" && "$MODE" != "2" && "$MODE" != "3" ]]; do
-  read -rp "Введи 1, 2 или 3: " MODE
-done
-[[ "$MODE" == "3" ]] && exit 0
+Полная настройка новой VPS с Debian 12:
 
-# ============================================
-# ОПРЕДЕЛЕНИЕ УРОВНЯ CPU
-# ============================================
-CPU_FLAGS=$(awk '/flags/{print; exit}' /proc/cpuinfo)
-if echo "$CPU_FLAGS" | grep -q "avx2"; then
-  LTS_PKG="linux-xanmod-lts-x64v3"
-else
-  LTS_PKG="linux-xanmod-lts-x64v2"
-fi
+- [XanMod LTS](https://xanmod.org) ядро (автоматически `x64v2`/`x64v3` по флагам CPU)
+- BBR + fq qdisc
+- UFW (обычная нода или selfsteal)
+- Fail2ban для защиты SSH (3 попытки → бан 24 часа)
+- Оптимизации: tuned (`network-throughput`), irqbalance, haveged, systemd-timesyncd
+- Unattended-upgrades — автоматические security-патчи (ядро в blacklist)
+- [MOTD](https://github.com/distillium/motd) с преднастроенным конфигом
+- Таймзона `Europe/Moscow`
+- Утилита `kernel-cleanup` для удаления старых ядер
 
-# ============================================
-# ОБЩИЕ ФУНКЦИИ
-# ============================================
+В конце автоматический ребут через 10 секунд.
 
-install_xanmod_repo() {
-  mkdir -p /etc/apt/keyrings
-  if [ ! -f /etc/apt/keyrings/xanmod-archive-keyring.gpg ] && \
-     [ ! -f /usr/share/keyrings/xanmod-archive-keyring.gpg ]; then
-    wget -qO - https://dl.xanmod.org/archive.key | \
-      gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
-  fi
-  if [ -f /etc/apt/keyrings/xanmod-archive-keyring.gpg ]; then
-    KEY_PATH="/etc/apt/keyrings/xanmod-archive-keyring.gpg"
-  else
-    KEY_PATH="/usr/share/keyrings/xanmod-archive-keyring.gpg"
-  fi
-  rm -f /etc/apt/sources.list.d/xanmod-*.list
-  echo "deb [signed-by=${KEY_PATH}] http://deb.xanmod.org bookworm main" | \
-    tee /etc/apt/sources.list.d/xanmod-release.list
-}
+### 2. Upgrade — апгрейд существующей ноды
 
-apply_optimizations() {
-  systemctl enable --now tuned >/dev/null 2>&1
-  tuned-adm profile network-throughput
-  echo "  tuned → network-throughput"
+Идемпотентный режим — добавляет только то, чего не хватает:
 
-  systemctl enable --now irqbalance >/dev/null 2>&1
-  echo "  irqbalance → включён"
+- Ставит недостающие утилиты (tuned, irqbalance, haveged, timesyncd, unattended-upgrades)
+- Переключает XanMod на LTS-ветку (если ещё не стоит)
+- Исправляет репозиторий xanmod на `bookworm` если стоит `releases` (фикс libbpf1)
+- Применяет профиль `network-throughput`
+- Настраивает автоматические security-обновления
+- **НЕ трогает** существующие правила UFW, fail2ban, MOTD, hostname, sysctl
+- Ребут только по подтверждению и только если установлено новое ядро
 
-  systemctl enable --now haveged >/dev/null 2>&1
-  echo "  haveged → включён"
+## Требования
 
-  systemctl enable --now systemd-timesyncd >/dev/null 2>&1
-  timedatectl set-ntp true
-  echo "  systemd-timesyncd → включён"
-}
+- Debian 12 (Bookworm)
+- Root-доступ
+- Для режима Setup — IP адрес панели Remnawave
 
-setup_unattended_upgrades() {
-  cat > /etc/apt/apt.conf.d/50unattended-upgrades << 'EOF'
-Unattended-Upgrade::Origins-Pattern {
-    "origin=Debian,codename=${distro_codename},label=Debian-Security";
-};
-Unattended-Upgrade::Package-Blacklist {
-    "linux-";
-};
-Unattended-Upgrade::AutoFixInterruptedDpkg "true";
-Unattended-Upgrade::MinimalSteps "true";
-Unattended-Upgrade::Remove-Unused-Dependencies "true";
-Unattended-Upgrade::Automatic-Reboot "false";
-EOF
+## Запуск
 
-  cat > /etc/apt/apt.conf.d/20auto-upgrades << 'EOF'
-APT::Periodic::Update-Package-Lists "1";
-APT::Periodic::Unattended-Upgrade "1";
-APT::Periodic::AutocleanInterval "7";
-EOF
+```bash
+bash <(curl -fsSL https://raw.githubusercontent.com/trillvertual/rw-node-xanmod/main/setup.sh)
+```
 
-  systemctl enable --now unattended-upgrades >/dev/null 2>&1
-}
+Скрипт спросит режим (Setup или Upgrade) и дальше пойдёт по выбранному сценарию.
 
-show_status() {
-  echo
-  echo "Активные сервисы:"
-  echo "  tuned:      $(tuned-adm active 2>/dev/null | grep -oP '(?<=profile: ).*')"
-  echo "  irqbalance: $(systemctl is-active irqbalance)"
-  echo "  haveged:    $(systemctl is-active haveged)"
-  echo "  timesync:   $(systemctl is-active systemd-timesyncd)"
-  echo "  unattended: $(systemctl is-active unattended-upgrades)"
-}
+## После установки
 
-# ============================================
-# SETUP MODE
-# ============================================
-if [ "$MODE" == "1" ]; then
+1. Установить Docker
+2. Добавить ноду в панели Remnawave
+3. Скопировать `docker-compose.yml` из панели в `/opt/remnanode/`
+4. Запустить `docker compose up -d`
 
-  echo
-  echo "=== SETUP — чистая установка ==="
-  echo
+## Полезные команды
 
-  read -rp "Имя хоста (например FR-1): " HOSTNAME
-  while [ -z "$HOSTNAME" ]; do
-    read -rp "Имя хоста не может быть пустым: " HOSTNAME
-  done
+```bash
+# Удалить старые ядра после обновления
+kernel-cleanup
 
-  read -rp "IP панели Remnawave: " PANEL_IP
-  while [[ ! "$PANEL_IP" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; do
-    read -rp "Неверный формат. IP панели: " PANEL_IP
-  done
+# Статус firewall
+ufw status verbose
 
-  echo
-  echo "Тип ноды:"
-  echo "  1) Обычная (без selfsteal)"
-  echo "  2) Selfsteal (открыть порт 8443)"
-  read -rp "Выбор [1/2]: " NODE_TYPE
-  while [[ "$NODE_TYPE" != "1" && "$NODE_TYPE" != "2" ]]; do
-    read -rp "Введи 1 или 2: " NODE_TYPE
-  done
+# Забаненные IP в fail2ban
+fail2ban-client status sshd
 
-  echo
-  echo "==========================================="
-  echo "  Параметры:"
-  echo "  Hostname:  $HOSTNAME"
-  echo "  Panel IP:  $PANEL_IP"
-  echo "  Selfsteal: $([[ $NODE_TYPE == 2 ]] && echo 'да' || echo 'нет')"
-  echo "  XanMod:    $LTS_PKG (LTS)"
-  echo "==========================================="
-  read -rp "Продолжить? [y/N]: " CONFIRM
-  [[ "$CONFIRM" =~ ^[yY]$ ]] || exit 0
+# Активный профиль tuned
+tuned-adm active
 
-  echo
-  echo "[1/9] Установка hostname..."
-  hostnamectl set-hostname "$HOSTNAME"
+# Проверить синхронизацию времени
+timedatectl status
+```
 
-  echo "[2/9] Обновление системы и установка пакетов..."
-  wait_for_dpkg
-  apt-get update
-  wait_for_dpkg
-  apt-get upgrade -y $APT_OPTS
-  wait_for_dpkg
-  apt-get install -y $APT_OPTS sudo ufw nano git wget curl net-tools cron socat \
-    fail2ban psmisc expect tuned irqbalance haveged systemd-timesyncd unattended-upgrades
+## Порты
 
-  echo "[3/9] Установка XanMod LTS..."
-  install_xanmod_repo
-  wait_for_dpkg
-  apt-get update
-  wait_for_dpkg
-  apt-get install -y $APT_OPTS "$LTS_PKG"
-
-  echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
-  echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
-  sysctl -p
-
-  echo "[4/9] Установка kernel-cleanup..."
-  cat > /usr/local/sbin/kernel-cleanup << 'SCRIPT'
-#!/bin/bash
-CURRENT=$(uname -r)
-echo "Текущее ядро: $CURRENT"
-REMOVE=$(dpkg -l | grep 'linux-image-[0-9]' | grep '^ii' | awk '{print $2}' | grep -v "$CURRENT")
-if [ -z "$REMOVE" ]; then
-  echo "Нечего удалять."
-  exit 0
-fi
-echo "Удаляю: $REMOVE"
-apt purge -y $REMOVE && apt autoremove -y && update-grub
-SCRIPT
-  chmod +x /usr/local/sbin/kernel-cleanup
-
-  echo "[5/9] Настройка UFW..."
-  ufw default deny incoming
-  ufw default allow outgoing
-  ufw allow 22/tcp comment 'SSH'
-  ufw allow 443/tcp comment 'Xray Reality'
-  ufw allow from "$PANEL_IP" to any port 2222 proto tcp comment 'Remnawave Panel'
-  ufw allow from "$PANEL_IP" to any port 9100 proto tcp comment 'Node Exporter'
-  [ "$NODE_TYPE" == "2" ] && ufw allow 8443/tcp comment 'Selfsteal'
-  ufw --force enable
-
-  echo "[6/9] Настройка fail2ban..."
-  cat > /etc/fail2ban/jail.d/sshd.local << 'EOF'
-[DEFAULT]
-ignoreip = 127.0.0.1/8 ::1
-bantime = 86400
-findtime = 600
-maxretry = 3
-backend = systemd
-
-[sshd]
-enabled = true
-port = 22
-filter = sshd
-maxretry = 3
-bantime = 86400
-EOF
-  systemctl enable --now fail2ban
-  systemctl restart fail2ban
-
-  echo "[7/9] Применение оптимизаций..."
-  apply_optimizations
-  setup_unattended_upgrades
-
-  echo "[8/9] Установка MOTD..."
-  wait_for_dpkg
-  expect <<'EXPECT'
-set timeout 300
-spawn bash -c "curl -fsSL https://raw.githubusercontent.com/distillium/motd/main/install-motd.sh | bash"
-expect {
-    -re "Choice.*:" { send "1\r"; exp_continue }
-    -re "Выбор.*:" { send "1\r"; exp_continue }
-    timeout { exit 1 }
-    eof
-}
-EXPECT
-
-  timedatectl set-timezone Europe/Moscow
-
-  cat > /etc/dist-motd.conf << 'EOF'
-MOTDSET_LANG=ru
-SHOW_LOGO=false
-SHOW_CPU=true
-SHOW_MEM=true
-SHOW_NET=true
-SHOW_DOCKER=false
-SHOW_DOCKER_STATUS=false
-SHOW_DOCKER_RUNNING_LIST=false
-SHOW_FIREWALL=true
-SHOW_FIREWALL_RULES=false
-SHOW_UPDATES=true
-SHOW_SECURITY=false
-SERVICES_STATUS_ENABLED=false
-SERVICES=()
-EOF
-
-  echo "[9/9] Готово."
-  echo
-  echo "==========================================="
-  echo "  Установка завершена!"
-  echo "==========================================="
-  ufw status verbose
-  show_status
-  echo
-  echo "Ребут через 10 секунд... Ctrl+C для отмены"
-  sleep 10
-  reboot
-
-fi
-
-# ============================================
-# UPGRADE MODE
-# ============================================
-if [ "$MODE" == "2" ]; then
-
-  echo
-  echo "=== UPGRADE — апгрейд существующей ноды ==="
-  echo "Скрипт добавит недостающие компоненты и переключит ядро на XanMod LTS."
-  echo "Существующие настройки (UFW, fail2ban, MOTD, hostname) НЕ будут изменены."
-  echo
-  read -rp "Продолжить? [y/N]: " CONFIRM
-  [[ "$CONFIRM" =~ ^[yY]$ ]] || exit 0
-
-  echo
-  echo "[1/5] Установка недостающих утилит..."
-  wait_for_dpkg
-  apt-get update
-
-  PACKAGES=(tuned irqbalance haveged systemd-timesyncd unattended-upgrades psmisc)
-  TO_INSTALL=()
-  for pkg in "${PACKAGES[@]}"; do
-    if ! dpkg -s "$pkg" >/dev/null 2>&1; then
-      TO_INSTALL+=("$pkg")
-    fi
-  done
-
-  if [ ${#TO_INSTALL[@]} -gt 0 ]; then
-    echo "  Ставлю: ${TO_INSTALL[*]}"
-    wait_for_dpkg
-    apt-get install -y $APT_OPTS "${TO_INSTALL[@]}"
-  else
-    echo "  Все утилиты уже установлены."
-  fi
-
-  echo
-  echo "[2/5] Проверка XanMod LTS..."
-
-  if grep -rq "xanmod.org releases" /etc/apt/sources.list.d/ 2>/dev/null || \
-     ! grep -rq "xanmod.org bookworm" /etc/apt/sources.list.d/ 2>/dev/null; then
-    echo "  Исправляю репозиторий xanmod на bookworm..."
-    install_xanmod_repo
-    wait_for_dpkg
-    apt-get update
-  fi
-
-  NEED_REBOOT=0
-  if ! dpkg -l | grep -q "linux-xanmod-lts"; then
-    echo "  Устанавливаю $LTS_PKG..."
-    wait_for_dpkg
-    apt-get install -y $APT_OPTS "$LTS_PKG"
-    NEED_REBOOT=1
-  else
-    echo "  XanMod LTS уже установлен."
-  fi
-
-  echo
-  echo "[3/5] Применение оптимизаций..."
-  apply_optimizations
-
-  echo
-  echo "[4/5] Настройка unattended-upgrades..."
-  setup_unattended_upgrades
-  echo "  unattended-upgrades → только security"
-
-  echo
-  echo "[5/5] Готово."
-  echo
-  echo "==========================================="
-  echo "  Апгрейд завершён!"
-  echo "==========================================="
-  show_status
-  echo
-
-  if [ "$NEED_REBOOT" == "1" ]; then
-    echo "⚠️  Установлено новое ядро XanMod LTS."
-    echo "    Чтобы оно активировалось, нужен ребут."
-    echo "    После ребута запусти: kernel-cleanup"
-    echo
-    read -rp "Ребутнуть сейчас? [y/N]: " DOREBOOT
-    [[ "$DOREBOOT" =~ ^[yY]$ ]] && reboot
-  else
-    echo "Ребут не требуется."
-  fi
-
-fi
+| Порт | Протокол | Доступ     | Назначение       |
+|------|----------|------------|------------------|
+| 22   | TCP      | Anywhere   | SSH              |
+| 443  | TCP      | Anywhere   | Xray Reality     |
+| 2222 | TCP      | IP панели  | Remnawave Panel  |
+| 9100 | TCP      | IP панели  | Node Exporter    |
+| 8443 | TCP      | Anywhere   | Selfsteal (опц.) |
