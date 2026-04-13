@@ -204,6 +204,7 @@ SCRIPT
   echo "[5/9] Настройка UFW..."
   ufw default deny incoming
   ufw default allow outgoing
+  ufw default deny routed
   ufw allow 22/tcp comment 'SSH'
   ufw allow 443/tcp comment 'Xray Reality'
   ufw allow from "$PANEL_IP" to any port 2222 proto tcp comment 'Remnawave Panel'
@@ -235,6 +236,9 @@ EOF
   setup_unattended_upgrades
 
   echo "[8/9] Установка MOTD..."
+  # Останавливаем unattended-upgrades чтобы не конфликтовал с установкой MOTD
+  systemctl stop unattended-upgrades 2>/dev/null || true
+  systemctl mask unattended-upgrades 2>/dev/null || true
   wait_for_dpkg
   expect <<'EXPECT'
 set timeout 300
@@ -265,6 +269,10 @@ SHOW_SECURITY=false
 SERVICES_STATUS_ENABLED=false
 SERVICES=()
 EOF
+
+  # Возвращаем unattended-upgrades
+  systemctl unmask unattended-upgrades 2>/dev/null || true
+  systemctl start unattended-upgrades 2>/dev/null || true
 
   echo "[9/9] Готово."
   echo
