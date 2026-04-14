@@ -244,6 +244,8 @@ EOF
 set timeout 300
 spawn bash -c "curl -fsSL https://raw.githubusercontent.com/distillium/motd/main/install-motd.sh | bash"
 expect {
+    -re "Continue.*:" { send "y\r"; exp_continue }
+    -re "Продолжить.*:" { send "y\r"; exp_continue }
     -re "Choice.*:" { send "1\r"; exp_continue }
     -re "Выбор.*:" { send "1\r"; exp_continue }
     timeout { exit 1 }
