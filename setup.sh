@@ -173,7 +173,7 @@ if [ "$MODE" == "1" ]; then
   apt-get upgrade -y $APT_OPTS
   wait_for_dpkg
   apt-get install -y $APT_OPTS sudo ufw nano git wget curl net-tools cron socat \
-    fail2ban psmisc expect tuned irqbalance haveged systemd-timesyncd unattended-upgrades
+    fail2ban psmisc expect tuned irqbalance haveged systemd-timesyncd unattended-upgrades gnupg
 
   echo "[3/9] Установка XanMod LTS..."
   install_xanmod_repo
@@ -308,7 +308,7 @@ if [ "$MODE" == "2" ]; then
   wait_for_dpkg
   apt-get update
 
-  PACKAGES=(tuned irqbalance haveged systemd-timesyncd unattended-upgrades psmisc)
+  PACKAGES=(tuned irqbalance haveged systemd-timesyncd unattended-upgrades psmisc gnupg)
   TO_INSTALL=()
   for pkg in "${PACKAGES[@]}"; do
     if ! dpkg -s "$pkg" >/dev/null 2>&1; then
