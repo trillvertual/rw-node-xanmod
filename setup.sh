@@ -180,7 +180,16 @@ if [ "$MODE" == "1" ]; then
   wait_for_dpkg
   apt-get update
   wait_for_dpkg
-  apt-get install -y $APT_OPTS "$LTS_PKG"
+  # Ретрай на случай 404 от CDN xanmod
+  for i in 1 2 3; do
+    if apt-get install -y $APT_OPTS "$LTS_PKG"; then
+      break
+    fi
+    echo "  Попытка $i не удалась, жду 15 секунд..."
+    sleep 15
+    apt-get clean
+    apt-get update
+  done
 
   echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
   echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
