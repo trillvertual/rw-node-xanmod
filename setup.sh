@@ -61,8 +61,28 @@ install_xanmod_repo() {
   mkdir -p /etc/apt/keyrings
   if [ ! -f /etc/apt/keyrings/xanmod-archive-keyring.gpg ] && \
      [ ! -f /usr/share/keyrings/xanmod-archive-keyring.gpg ]; then
-    wget -qO - https://dl.xanmod.org/archive.key | \
-      gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
+    # Пробуем разные способы скачать ключ (wget, curl, curl с User-Agent)
+    KEY_DATA=""
+    for i in 1 2 3; do
+      KEY_DATA=$(wget -qO - https://dl.xanmod.org/archive.key 2>/dev/null) && [ -n "$KEY_DATA" ] && break
+      KEY_DATA=$(curl -fsSL https://dl.xanmod.org/archive.key 2>/dev/null) && [ -n "$KEY_DATA" ] && break
+      KEY_DATA=$(curl -fsSL -A "Mozilla/5.0" https://dl.xanmod.org/archive.key 2>/dev/null) && [ -n "$KEY_DATA" ] && break
+      # Fallback через Ubuntu keyserver
+      if command -v gpg >/dev/null; then
+        gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 86F7D09EE734E623 2>/dev/null && \
+        gpg --export 86F7D09EE734E623 > /etc/apt/keyrings/xanmod-archive-keyring.gpg && \
+        [ -s /etc/apt/keyrings/xanmod-archive-keyring.gpg ] && return 0
+      fi
+      sleep 5
+    done
+
+    if [ -z "$KEY_DATA" ]; then
+      echo "  Ошибка: не удалось скачать GPG ключ xanmod"
+      echo "  Проверь сеть до dl.xanmod.org"
+      exit 1
+    fi
+
+    echo "$KEY_DATA" | gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
   fi
   if [ -f /etc/apt/keyrings/xanmod-archive-keyring.gpg ]; then
     KEY_PATH="/etc/apt/keyrings/xanmod-archive-keyring.gpg"
