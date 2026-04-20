@@ -59,32 +59,44 @@ fi
 
 install_xanmod_repo() {
   mkdir -p /etc/apt/keyrings
-  if [ ! -f /etc/apt/keyrings/xanmod-archive-keyring.gpg ] && \
-     [ ! -f /usr/share/keyrings/xanmod-archive-keyring.gpg ]; then
-    # Пробуем разные способы скачать ключ (wget, curl, curl с User-Agent)
+  # Проверяем что ключ существует И не пустой (битые файлы с прошлых попыток)
+  NEED_KEY=1
+  [ -s /etc/apt/keyrings/xanmod-archive-keyring.gpg ] && NEED_KEY=0
+  [ -s /usr/share/keyrings/xanmod-archive-keyring.gpg ] && NEED_KEY=0
+
+  if [ "$NEED_KEY" == "1" ]; then
+    # Удаляем битые пустые файлы если есть
+    [ -f /etc/apt/keyrings/xanmod-archive-keyring.gpg ] && \
+      [ ! -s /etc/apt/keyrings/xanmod-archive-keyring.gpg ] && \
+      rm -f /etc/apt/keyrings/xanmod-archive-keyring.gpg
+
+    # Пробуем разные способы скачать ключ
     KEY_DATA=""
     for i in 1 2 3; do
       KEY_DATA=$(wget -qO - https://dl.xanmod.org/archive.key 2>/dev/null) && [ -n "$KEY_DATA" ] && break
       KEY_DATA=$(curl -fsSL https://dl.xanmod.org/archive.key 2>/dev/null) && [ -n "$KEY_DATA" ] && break
       KEY_DATA=$(curl -fsSL -A "Mozilla/5.0" https://dl.xanmod.org/archive.key 2>/dev/null) && [ -n "$KEY_DATA" ] && break
-      # Fallback через Ubuntu keyserver
       if command -v gpg >/dev/null; then
         gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys 86F7D09EE734E623 2>/dev/null && \
         gpg --export 86F7D09EE734E623 > /etc/apt/keyrings/xanmod-archive-keyring.gpg && \
-        [ -s /etc/apt/keyrings/xanmod-archive-keyring.gpg ] && return 0
+        [ -s /etc/apt/keyrings/xanmod-archive-keyring.gpg ] && break
       fi
       sleep 5
     done
 
-    if [ -z "$KEY_DATA" ]; then
-      echo "  Ошибка: не удалось скачать GPG ключ xanmod"
-      echo "  Проверь сеть до dl.xanmod.org"
-      exit 1
+    # Если через HTTP скачали — конвертируем
+    if [ -n "$KEY_DATA" ] && [ ! -s /etc/apt/keyrings/xanmod-archive-keyring.gpg ]; then
+      echo "$KEY_DATA" | gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
     fi
 
-    echo "$KEY_DATA" | gpg --dearmor -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
+    # Финальная проверка
+    if [ ! -s /etc/apt/keyrings/xanmod-archive-keyring.gpg ]; then
+      echo "  Ошибка: не удалось установить GPG ключ xanmod"
+      exit 1
+    fi
   fi
-  if [ -f /etc/apt/keyrings/xanmod-archive-keyring.gpg ]; then
+
+  if [ -s /etc/apt/keyrings/xanmod-archive-keyring.gpg ]; then
     KEY_PATH="/etc/apt/keyrings/xanmod-archive-keyring.gpg"
   else
     KEY_PATH="/usr/share/keyrings/xanmod-archive-keyring.gpg"
