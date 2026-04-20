@@ -199,6 +199,10 @@ if [ "$MODE" == "1" ]; then
   hostnamectl set-hostname "$HOSTNAME"
 
   echo "[2/9] Обновление системы и установка пакетов..."
+  # Удаляем возможно сломанный xanmod-репозиторий с прошлых попыток
+  # (восстановим его правильно в шаге 3)
+  rm -f /etc/apt/sources.list.d/xanmod-*.list
+  rm -f /etc/apt/keyrings/xanmod-archive-keyring.gpg
   wait_for_dpkg
   apt-get update
   wait_for_dpkg
