@@ -216,9 +216,12 @@ if [ "$MODE" == "1" ]; then
   wait_for_dpkg
   apt-get update
   wait_for_dpkg
-  # Ретрай на случай 404 от CDN xanmod
+
+  # Пробуем установить мета-пакет с ретраями
+  META_INSTALLED=0
   for i in 1 2 3; do
     if apt-get install -y $APT_OPTS "$LTS_PKG"; then
+      META_INSTALLED=1
       break
     fi
     echo "  Попытка $i не удалась, жду 15 секунд..."
@@ -226,6 +229,24 @@ if [ "$MODE" == "1" ]; then
     apt-get clean
     apt-get update
   done
+
+  # Если мета-пакет не ставится (404 на CDN) — ставим image+headers напрямую
+  if [ "$META_INSTALLED" == "0" ]; then
+    echo "  Мета-пакет недоступен (проблема на стороне xanmod CDN)"
+    echo "  Устанавливаю image + headers напрямую..."
+    # Находим последнюю доступную версию ядра через apt
+    KERNEL_VER=$(apt-cache search "^linux-image-.*-$(echo $LTS_PKG | grep -oP 'x64v\d')-xanmod1$" | \
+                 awk '{print $1}' | sort -V | tail -1 | \
+                 sed 's/linux-image-//')
+    if [ -n "$KERNEL_VER" ]; then
+      apt-get install -y $APT_OPTS \
+        "linux-image-${KERNEL_VER}" \
+        "linux-headers-${KERNEL_VER}"
+    else
+      echo "  Ошибка: не удалось определить версию ядра"
+      exit 1
+    fi
+  fi
 
   echo "net.core.default_qdisc=fq" >> /etc/sysctl.conf
   echo "net.ipv4.tcp_congestion_control=bbr" >> /etc/sysctl.conf
